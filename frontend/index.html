@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Llamada Video Futurista</title>
+<style>
+body { margin:0; font-family: Arial, sans-serif; background:#0c0c0f; color:#fff; }
+header { padding:10px; text-align:center; background: linear-gradient(90deg, #6a00f4, #00c3ff); }
+h1 { margin:0; font-size:1.5em; }
+#lobby { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; padding:10px; }
+#lobby input, #lobby select { padding:10px; margin:5px; width:80%; max-width:300px; border-radius:5px; border:none; }
+#lobby button { padding:10px 20px; margin:5px; background:#6a00f4; border:none; color:white; border-radius:5px; cursor:pointer; width:80%; max-width:300px; }
+#video-area { display:none; flex-direction:column; align-items:center; padding:10px; }
+#users-container { display:flex; flex-wrap:wrap; justify-content:center; margin-bottom:10px; }
+.user-video { width:150px; height:120px; margin:5px; background:black; border-radius:10px; position:relative; border:2px solid transparent; display:flex; align-items:center; justify-content:center; color:white; font-size:0.9em; }
+.user-video.admin { border-color: gold; } 
+.user-video.speaking { border-color: #6a00f4; } 
+#main-video-container { width:100%; max-width:800px; height:400px; margin-bottom:10px; }
+#controls { display:flex; justify-content:center; flex-wrap:wrap; margin-top:10px; }
+#controls button, #controls input, #controls select { padding:10px; margin:5px; border-radius:5px; border:none; }
+#controls button { background:#00c3ff; color:black; cursor:pointer; }
+#chat-container { display:none; flex-direction:column; position:fixed; right:0; bottom:0; width:80%; max-width:300px; height:50%; background:#111; border-left:2px solid #6a00f4; border-top-left-radius:10px; }
+#chat-container #chat { flex:1; overflow-y:auto; padding:5px; }
+#chat-container input { padding:5px; margin:5px; width:calc(100% - 20px); border-radius:5px; border:none; }
+#toggle-chat, #leave-room { position:fixed; right:10px; bottom:10px; padding:10px; border:none; border-radius:50%; background:#6a00f4; color:white; cursor:pointer; }
+#leave-room { bottom:60px; }
+@media(max-width:600px){
+    #users-container { flex-direction:column; align-items:center; }
+    #chat-container { width:90%; height:40%; }
+}
+</style>
+</head>
+<body>
+
+<header>
+    <h1>BLUEVIDEOHUB</h1>
+</header>
+
+<!-- LOBBY -->
+<div id="lobby">
+    <input type="text" id="username" placeholder="Nombre de usuario" required>
+    
+    <label>Salas públicas:</label>
+    <select id="public-salas"></select>
+    <button id="join-public">Unirse a sala pública</button>
+
+    <input type="text" id="private-id" placeholder="ID para sala privada">
+    <button id="create-private">Crear sala privada</button>
+    <button id="join-private">Unirse a sala privada</button>
+</div>
+
+<!-- AREA DE VIDEO -->
+<div id="video-area">
+    <div id="users-container"></div>
+    <div id="main-video-container"></div>
+    <div id="controls">
+        <input type="text" id="video-url" placeholder="Pega URL de YouTube" disabled>
+        <button id="load-video">Cargar Video</button>
+        <select id="pass-control">
+            <option value="">Pasar el mando a:</option>
+        </select>
+        <button id="emoji">😀</button>
+        <button id="emoji2">🎉</button>
+    </div>
+</div>
+
+<!-- CHAT OCULTABLE -->
+<div id="chat-container">
+    <div id="chat"></div>
+    <input type="text" id="chat-input" placeholder="Escribe un mensaje...">
+</div>
+<button id="toggle-chat">💬</button>
+<button id="leave-room">🚪</button>
+
+<script>
+// Backend URL
+const SIGNALING_SERVER = "https://videollamada-app.onrender.com";
+
+const lobby = document.getElementById("lobby");
+const videoArea = document.getElementById("video-area");
+const usersContainer = document.getElementById("users-container");
+const mainVideoContainer = document.getElementById("main-video-container");
+const usernameInput = document.getElementById("username");
+
+const publicSelect = document.getElementById("public-salas");
+const joinPublicBtn = document.getElementById("join-public");
+const createPrivateBtn = document.getElementById("create-private");
+const joinPrivateBtn = document.getElementById("join-private");
+const privateIdInput = document.getElementById("private-id");
+
+const videoUrlInput = document.getElementById("video-url");
+const loadVideoBtn = document.getElementById("load-video");
+const passControlSelect = document.getElementById("pass-control");
+
+const toggleChatBtn = document.getElementById("toggle-chat");
+const leaveRoomBtn = document.getElementById("leave-room");
+const chatContainer = document.getElementById("chat-container");
+
+let hasControl = false;
+let currentRoom = "";
+let username = "";
+
+// Simular salas públicas
+const MAX_USERS = 5;
+const publicRooms = ["Sala A", "Sala B", "Sala C"];
+const roomUsers = { "Sala A": [], "Sala B": [], "Sala C": [] }; 
+const roomAdmins = {}; 
+
+function updatePublicSelect() {
+    publicSelect.innerHTML = "";
+    publicRooms.forEach(room => {
+        if(roomUsers[room].length < MAX_USERS){
+            const opt = document.createElement("option");
+            opt.value = room;
+            opt.textContent = `${room} (${roomUsers[room].length}/${MAX_USERS})`;
+            publicSelect.appendChild(opt);
+        }
+    });
+}
+
+function addUserVideo(name){
+    const existing = Array.from(usersContainer.children).find(u => u.dataset.name === name);
+    if(existing) usersContainer.removeChild(existing);
+
+    const div = document.createElement("div");
+    div.classList.add("user-video");
+    if(roomAdmins[currentRoom] === name) div.classList.add("admin");
+    div.textContent = name;
+    div.dataset.name = name;
+    usersContainer.appendChild(div);
+
+    // Actualizar select para pasar el mando (sin incluir admin actual)
+    passControlSelect.innerHTML = '<option value="">Pasar el mando a:</option>';
+    roomUsers[currentRoom].forEach(user => {
+        if(user !== roomAdmins[currentRoom]){
+            const option = document.createElement("option");
+            option.value = user;
+            option.textContent = user;
+            passControlSelect.appendChild(option);
+        }
+    });
+}
+
+// Entrar a sala
+function enterRoom(room, isControl, isAdmin=false){
+    username = usernameInput.value.trim();
+    if(!username) return alert("Debes ingresar tu nombre de usuario");
+
+    currentRoom = room;
+    lobby.style.display = "none";
+    videoArea.style.display = "flex";
+    chatContainer.style.display = "flex";
+    leaveRoomBtn.style.display = "block";
+    toggleChatBtn.style.display = "block";
+    hasControl = isControl;
+
+    roomUsers[room].push(username);
+
+    // Asignar admin si es el primero o si es sala privada creada
+    if(isAdmin || !roomAdmins[room]){
+        roomAdmins[room] = username;
+        hasControl = true;
+    }
+
+    addUserVideo(username);
+    videoUrlInput.disabled = !hasControl;
+}
+
+// BOTONES LOBBY
+joinPublicBtn.onclick = () => {
+    const room = publicSelect.value;
+    if(!room) return alert("No hay salas disponibles");
+    const isAdmin = roomUsers[room].length === 0;
+    enterRoom(room, isAdmin, isAdmin);
+};
+
+createPrivateBtn.onclick = () => {
+    const room = privateIdInput.value.trim();
+    if(!room) return alert("Debes ingresar un ID de sala privada");
+    enterRoom(room, true, true);
+};
+
+joinPrivateBtn.onclick = () => {
+    const room = privateIdInput.value.trim();
+    if(!room) return alert("Debes ingresar un ID de sala privada");
+    enterRoom(room, false);
+};
+
+// Toggle chat
+toggleChatBtn.onclick = () => {
+    chatContainer.style.display = chatContainer.style.display === "flex" ? "none" : "flex";
+};
+
+// Salir de sala
+leaveRoomBtn.onclick = () => {
+    videoArea.style.display = "none";
+    lobby.style.display = "flex";
+    chatContainer.style.display = "none";
+    usersContainer.innerHTML = "";
+    mainVideoContainer.innerHTML = "";
+    if(currentRoom && roomUsers[currentRoom]){
+        const idx = roomUsers[currentRoom].indexOf(username);
+        if(idx>-1) roomUsers[currentRoom].splice(idx,1);
+        if(roomAdmins[currentRoom] === username) roomAdmins[currentRoom] = roomUsers[currentRoom][0] || null;
+    }
+    hasControl = false;
+    updatePublicSelect();
+};
+
+// Cargar video (YouTube iframe)
+loadVideoBtn.onclick = () => {
+    if(!hasControl) return alert("No tienes el control del video");
+    const url = videoUrlInput.value.trim();
+    if(!url) return;
+
+    const videoIdMatch = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+    if(!videoIdMatch) return alert("URL de YouTube inválida");
+
+    const videoId = videoIdMatch[1];
+
+    mainVideoContainer.innerHTML = `<iframe width="100%" height="400" 
+        src="https://www.youtube.com/embed/${videoId}?autoplay=1" 
+        frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen>
+    </iframe>`;
+};
+
+// Pasar control
+passControlSelect.onchange = () => {
+    const newAdmin = passControlSelect.value;
+    if(!newAdmin) return;
+    roomAdmins[currentRoom] = newAdmin;
+    hasControl = (newAdmin === username);
+    videoUrlInput.disabled = !hasControl;
+    addUserVideo(newAdmin);
+    passControlSelect.value = "";
+};
+
+// Inicializar lista salas públicas
+updatePublicSelect();
+</script>
+
+</body>
+</html>

@@ -1,10 +1,13 @@
-// server.js
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
+
+// URL de tu backend (Render)
+const BACKEND_URL = "https://videollamada-app.onrender.com";
+console.log("SIGNALING SERVER URL:", BACKEND_URL);
 
 const io = new Server(server, {
   cors: { origin: ["*"], methods: ["GET","POST"] }
@@ -27,6 +30,7 @@ io.on('connection', (socket) => {
     // build list of other peers
     const peers = Array.from(rooms[roomId].members).filter(id => id !== socket.id);
     socket.emit('room-joined', { peers });
+
     // notify room of updated info
     io.to(roomId).emit('room-info', {
       roomId,
@@ -81,12 +85,14 @@ function leaveRoom(socket, roomId){
   rooms[roomId].members.delete(socket.id);
   delete rooms[roomId].names[socket.id];
   io.to(roomId).emit('peer-left', socket.id);
+
   // if controller left -> assign new
   if(rooms[roomId].controller === socket.id){
     const next = rooms[roomId].members.values().next().value || null;
     rooms[roomId].controller = next;
     io.to(roomId).emit('controlChanged', {controllerId: next, controllerName: next ? rooms[roomId].names[next] : null});
   }
+
   if(rooms[roomId].members.size === 0){
     delete rooms[roomId];
   } else {
